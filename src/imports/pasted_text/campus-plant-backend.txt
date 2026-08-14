@@ -1,0 +1,317 @@
+Build the complete backend for a web application called **Campus Plant Navigation** using **Supabase**.
+
+### Main idea
+
+Students can discover plants/trees on campus and contribute new plant records.
+
+A student can:
+
+* Take/upload a plant or tree photo
+* Enter the plant name if known
+* Automatically capture their GPS latitude and longitude
+* Add an optional description
+* Submit the record
+
+The submission goes into **Pending** status.
+
+An administrator verifies the plant information and location.
+
+Only **verified plants** become publicly searchable and appear on the campus map.
+
+Users can then search for any verified plant/tree and find the nearest one using their current GPS location.
+
+---
+
+## Database
+
+Create these tables:
+
+### `profiles`
+
+Fields:
+
+* id
+* name
+* email
+* avatar_url
+* role (`user` or `admin`)
+* points
+* created_at
+
+### `plants`
+
+Fields:
+
+* id
+* common_name
+* scientific_name
+* local_name
+* plant_type
+* description
+* latitude
+* longitude
+* campus_zone
+* landmark
+* image_url
+* submitted_by
+* status (`pending`, `verified`, `rejected`)
+* verified_by
+* verified_at
+* created_at
+* updated_at
+
+### `submissions`
+
+Use this if needed to keep the original student submission separately.
+
+Fields:
+
+* id
+* submitted_by
+* image_url
+* suggested_name
+* latitude
+* longitude
+* description
+* status
+* admin_notes
+* created_at
+* reviewed_at
+
+### `leaderboard`
+
+Prefer calculating leaderboard information from verified plant submissions rather than duplicating data unnecessarily.
+
+---
+
+## Authentication
+
+Use Supabase Auth.
+
+Users can sign up/login.
+
+Admins have a separate role.
+
+Normal users:
+
+* Submit plants
+* View verified plants
+* Search plants
+* View leaderboard
+* View map
+
+Admins:
+
+* View pending submissions
+* Verify submissions
+* Reject submissions
+* Edit plant information
+* Delete incorrect records
+* Manage users if necessary
+
+---
+
+## Plant Submission Workflow
+
+Implement:
+
+```text
+Student
+ ↓
+Upload photo
+ ↓
+Capture GPS
+ ↓
+Enter plant name/details
+ ↓
+Submit
+ ↓
+Pending
+ ↓
+Admin reviews
+ ↓
+Verified
+ ↓
+Plant becomes public
+```
+
+A rejected submission must NOT appear on the public map.
+
+---
+
+## GPS
+
+Store the plant's latitude and longitude when the student submits it.
+
+Do NOT permanently store the student's personal live location.
+
+Only store the coordinates associated with the submitted plant.
+
+---
+
+## Verification
+
+Admin should be able to:
+
+* View submitted photograph
+* View submitted location on map
+* View submitted plant name
+* Edit scientific/common/local name
+* Correct coordinates
+* Add notes
+* Approve
+* Reject
+
+When approved:
+
+```text
+status = verified
+verified_by = admin ID
+verified_at = current timestamp
+```
+
+---
+
+## Points and Leaderboard
+
+Create a gamification system.
+
+Only **verified contributions** earn points.
+
+Suggested points:
+
+* Plant submitted: 5 points
+* Plant verified: additional 10 points
+* First verified record of a plant species: +20 bonus
+
+Avoid awarding points for rejected submissions.
+
+Create a leaderboard showing:
+
+* Rank
+* Student name
+* Verified plants contributed
+* Total points
+
+The highest contributor should appear at the top.
+
+Example:
+
+```text
+🥇 Arun — 32 verified plants — 420 points
+🥈 Priya — 27 verified plants — 350 points
+🥉 Kavin — 21 verified plants — 280 points
+```
+
+---
+
+## Storage
+
+Create Supabase Storage buckets:
+
+`plant-images`
+
+`profile-images`
+
+Configure appropriate access policies.
+
+Plant images should be viewable publicly after verification.
+
+---
+
+## Public Plant Search
+
+Create database queries/functions that allow the frontend to:
+
+* Search common name
+* Search scientific name
+* Search local name
+* Retrieve verified plants
+* Retrieve plants by plant type
+
+Only records where:
+
+```text
+status = 'verified'
+```
+
+should be publicly returned.
+
+---
+
+## Nearest Plant
+
+The frontend will provide:
+
+```text
+userLatitude
+userLongitude
+```
+
+The backend should support retrieving matching verified plants.
+
+If possible, use PostgreSQL/PostGIS for spatial queries.
+
+If PostGIS is not used, allow the frontend to calculate distances using the Haversine formula.
+
+The system must support:
+
+```text
+Search "Neem"
+        ↓
+Get all verified Neem plants
+        ↓
+Calculate distance
+        ↓
+Nearest Neem
+```
+
+---
+
+## Security
+
+Implement proper Row Level Security.
+
+Public authenticated/anonymous users can read verified plants.
+
+Users can create their own submissions.
+
+Users cannot:
+
+* Verify plants
+* Change points
+* Change another user's submissions
+* Change verified status
+
+Only admins can verify/reject/edit/delete plant records.
+
+Do not expose the Supabase service-role key.
+
+Use only the anonymous/public key in the frontend.
+
+---
+
+## Required Backend Deliverables
+
+Generate:
+
+1. Complete Supabase SQL schema
+2. Tables
+3. Relationships
+4. Indexes
+5. RLS policies
+6. Authentication setup
+7. Storage bucket policies
+8. Database functions if needed
+9. Leaderboard queries
+10. Plant search queries
+11. Verification workflow
+12. Sample seed data
+13. `.env.example`
+14. Complete setup instructions
+
+Use realistic demo data but clearly mark demo coordinates as placeholders.
+
+Do not invent actual campus coordinates.
+
+Make the backend ready for connection to a React frontend.

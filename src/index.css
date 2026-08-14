@@ -1,0 +1,45 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Outfit:wght@400;500;600;700&display=swap');
+@import 'tailwindcss';
+
+@theme inline {
+  --color-forest: #1a4731;
+  --color-leaf: #2d6a4f;
+  --color-mint: #52b788;
+  --color-sage: #95d5b2;
+  --color-mist: #d8f3dc;
+  --color-petal: #f0faf5;
+  --color-bark: #3d1f0d;
+  --color-sand: #fefae0;
+  --font-display: 'Fraunces', serif;
+  --font-body: 'Outfit', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: var(--font-body);
+  background-color: #f0faf5;
+  color: #1a4731;
+}
+
+body {
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 {
+  font-family: var(--font-display);
+}
+
+/* Hide scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #95d5b2; border-radius: 4px; }
+
+/* Leaflet map container */
+.leaflet-container {
+  font-family: var(--font-body) !important;
+  border-radius: 12px;
+}

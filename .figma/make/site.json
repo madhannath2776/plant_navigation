@@ -1,0 +1,10 @@
+{
+  "description": "Enables seamless integration of frontend and backend prompts into a unified application, streamlining development for efficient end-to-end solutions.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
