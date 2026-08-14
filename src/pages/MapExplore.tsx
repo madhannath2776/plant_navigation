@@ -15,7 +15,6 @@ export default function MapExplore() {
     supabase
       .from("plants")
       .select("*")
-      .eq("status", "approved")
       .then(({ data }) => {
         setPlants((data as Plant[]) ?? []);
         setLoading(false);

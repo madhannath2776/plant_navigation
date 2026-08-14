@@ -25,7 +25,6 @@ export default function Home() {
               .from("plants")
               .select("id", { count: "exact" })
               .eq("submitted_by", p.id)
-              .eq("status", "approved")
               .then(({ count }) => ({
                 id: p.id,
                 name: p.name,
@@ -40,7 +39,6 @@ export default function Home() {
     supabase
       .from("plants")
       .select("id", { count: "exact" })
-      .eq("status", "approved")
       .then(({ count }) => setStats((s) => ({ ...s, plants: count ?? 0 })));
 
     supabase

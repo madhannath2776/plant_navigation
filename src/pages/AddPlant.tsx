@@ -3,14 +3,16 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
 import { useGeolocation } from "@/hooks/useGeolocation";
+import { gpsQuality } from "@/lib/geo";
+import LocationPicker from "@/components/LocationPicker";
+import type { LocationData } from "@/types";
 
-const MAX_ORIGINAL_FILE_BYTES = 15 * 1024 * 1024; // 15 MB — sanity cap before we even try to compress
-const MAX_DIMENSION = 1600; // px, long edge — plenty for a plant photo, keeps uploads small
+const MAX_ORIGINAL_FILE_BYTES = 15 * 1024 * 1024; // 15 MB sanity cap before compression
+const MAX_DIMENSION = 1600; // px, long edge
 const JPEG_QUALITY = 0.8;
 
-/** Resizes/compresses an image client-side so we never upload an
- * unnecessarily huge photo straight from a phone camera. Returns a new
- * File; falls back to the original file if anything goes wrong. */
+/** Resizes/compresses an image client-side. Returns a new File; falls
+ * back to the original file if anything goes wrong. */
 async function compressImage(file: File): Promise<File> {
   try {
     const bitmap = await createImageBitmap(file);
@@ -25,17 +27,18 @@ async function compressImage(file: File): Promise<File> {
     if (!ctx) return file;
     ctx.drawImage(bitmap, 0, 0, width, height);
 
-    const blob: Blob | null = await new Promise((resolve) =>
-      canvas.toBlob(resolve, "image/jpeg", JPEG_QUALITY)
-    );
+    const blob: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", JPEG_QUALITY));
     if (!blob) return file;
 
-    return new File([blob], file.name.replace(/\.\w+$/, "") + ".jpg", {
-      type: "image/jpeg",
-    });
+    return new File([blob], file.name.replace(/\.\w+$/, "") + ".jpg", { type: "image/jpeg" });
   } catch {
-    return file; // compression is a nice-to-have, never block a submission over it
+    return file;
   }
+}
+
+function uniqueStoragePath(userId: string, ext: string) {
+  const rand = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `${userId}/${rand}.${ext}`;
 }
 
 export default function AddPlant() {
@@ -45,18 +48,23 @@ export default function AddPlant() {
 
   const [plantName, setPlantName] = useState("");
   const [landmark, setLandmark] = useState("");
+  const [location, setLocation] = useState<LocationData | null>(null);
+  const [showMapPicker, setShowMapPicker] = useState(false);
+
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [imageError, setImageError] = useState("");
-  const [uploadPct, setUploadPct] = useState<number | null>(null);
-  const [loading, setLoading] = useState(false);
+
+  const [stage, setStage] = useState<"idle" | "uploading" | "saving">("idle");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+  const submittingRef = useRef(false); // belt-and-braces guard against double-click, on top of the disabled button
   const fileRef = useRef<HTMLInputElement>(null);
 
   function resetForm() {
     setPlantName("");
     setLandmark("");
+    setLocation(null);
     setImageFile(null);
     setImagePreview(null);
     setImageError("");
@@ -68,7 +76,7 @@ export default function AddPlant() {
     setImageError("");
 
     if (!file.type.startsWith("image/")) {
-      setImageError("Please upload a valid image (JPG, PNG, etc.).");
+      setImageError("Please upload a valid image (JPEG, PNG, or WEBP).");
       return;
     }
     if (file.size > MAX_ORIGINAL_FILE_BYTES) {
@@ -81,7 +89,19 @@ export default function AddPlant() {
     setImagePreview(URL.createObjectURL(compressed));
   }
 
-  const hasLocation = geo.status === "ok";
+  // GPS reading resolved — turn it into a LocationData record.
+  if (geo.status === "ok" && location?.source !== "gps") {
+    setLocation({ source: "gps", latitude: geo.lat, longitude: geo.lon, accuracy: geo.accuracy });
+  }
+
+  function handleMapConfirm(lat: number, lon: number) {
+    setLocation({ source: "map", latitude: lat, longitude: lon, accuracy: null });
+    setShowMapPicker(false);
+  }
+
+  function changeLocation() {
+    setLocation(null);
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -89,6 +109,7 @@ export default function AddPlant() {
       navigate("/auth");
       return;
     }
+    if (submittingRef.current) return; // double-click guard
     setError("");
 
     const trimmedName = plantName.trim();
@@ -100,55 +121,59 @@ export default function AddPlant() {
       setError("Please upload a valid image.");
       return;
     }
-    if (!hasLocation) {
-      setError("Please capture your current location first.");
+    if (!location) {
+      setError("Please capture your location — use GPS or select it on the map.");
       return;
     }
 
-    setLoading(true);
-    setUploadPct(0);
+    submittingRef.current = true;
+    setStage("uploading");
 
     const ext = imageFile.type === "image/jpeg" ? "jpg" : (imageFile.name.split(".").pop() ?? "jpg");
-    const path = `${user.id}/${Date.now()}.${ext}`;
+    const path = uniqueStoragePath(user.id, ext);
 
     const { error: uploadErr } = await supabase.storage
       .from("plant-images")
-      .upload(path, imageFile, { upsert: true, contentType: imageFile.type || "image/jpeg" });
+      .upload(path, imageFile, { upsert: false, contentType: imageFile.type || "image/jpeg" });
 
     if (uploadErr) {
       setError("Unable to connect. Please try again. (" + uploadErr.message + ")");
-      setLoading(false);
-      setUploadPct(null);
+      setStage("idle");
+      submittingRef.current = false;
       return;
     }
-    setUploadPct(100);
 
     const { data: urlData } = supabase.storage.from("plant-images").getPublicUrl(path);
+    setStage("saving");
 
-    const { error: insertErr } = await supabase.from("plants").insert({
+    const { error: insertErr } = await supabase.from("plant_submissions").insert({
       plant_name: trimmedName,
       photo_url: urlData.publicUrl,
-      latitude: geo.lat,
-      longitude: geo.lon,
+      latitude: location.latitude,
+      longitude: location.longitude,
+      location_accuracy: location.accuracy,
+      location_source: location.source,
       landmark: landmark.trim() || null,
       submitted_by: user.id,
       status: "pending",
     });
 
     if (insertErr) {
+      // The photo uploaded but the record didn't save — clean up the
+      // orphaned file rather than leaving it in storage with nothing
+      // pointing to it.
+      await supabase.storage.from("plant-images").remove([path]);
       setError("Unable to save your plant. Please try again. (" + insertErr.message + ")");
-      setLoading(false);
-      setUploadPct(null);
+      setStage("idle");
+      submittingRef.current = false;
       return;
     }
 
     // Points are awarded entirely server-side by a DB trigger on insert
-    // (see supabase-schema.sql) — no client-side point mutation, so a user
-    // can never grant themselves points directly.
-
+    // (see supabase-schema.sql) — never by a client-callable RPC.
     setSuccess(true);
-    setLoading(false);
-    setUploadPct(null);
+    setStage("idle");
+    submittingRef.current = false;
   }
 
   if (success) {
@@ -158,7 +183,7 @@ export default function AddPlant() {
           <div className="text-6xl mb-4">🌱</div>
           <h2 className="font-display font-bold text-2xl text-[#1a4731] mb-2">Submitted!</h2>
           <p className="text-[#52b788] mb-6">
-            Your plant is waiting for admin verification. You'll earn points when it's approved!
+            Your plant has been submitted successfully. It will appear publicly after admin verification.
           </p>
           <div className="space-y-3">
             <button
@@ -197,6 +222,9 @@ export default function AddPlant() {
     );
   }
 
+  const quality = geo.status === "ok" ? gpsQuality(geo.accuracy) : null;
+  const isSubmitting = stage !== "idle";
+
   return (
     <div className="min-h-screen bg-[#f0faf5] pt-16 pb-24">
       <div className="bg-[#1a4731] px-4 py-6">
@@ -205,7 +233,7 @@ export default function AddPlant() {
       </div>
 
       <form onSubmit={handleSubmit} className="px-4 py-6 space-y-6">
-        {/* Photo upload — required */}
+        {/* Photo — required */}
         <div>
           <label className="block text-sm font-semibold text-[#1a4731] mb-2">
             Plant Photo <span className="text-red-400">*</span>
@@ -252,42 +280,102 @@ export default function AddPlant() {
           />
         </div>
 
-        {/* GPS — required, captured automatically, never typed */}
+        {/* Location — GPS or map pin, never typed */}
         <div>
           <label className="block text-sm font-semibold text-[#1a4731] mb-2">
             Location <span className="text-red-400">*</span>
           </label>
-          <button
-            type="button"
-            onClick={requestGeo}
-            className="flex items-center justify-center gap-2 bg-[#d8f3dc] text-[#1a4731] rounded-xl px-4 py-3.5 text-base font-medium w-full hover:bg-[#95d5b2] transition-colors"
-          >
-            {geo.status === "loading" ? <span>⏳ Detecting…</span> : <span>📍 Use My Current Location</span>}
-          </button>
 
-          {geo.status === "ok" && (
-            <div className="mt-2 bg-green-50 border border-green-200 rounded-xl px-4 py-2.5 text-sm">
-              <p className="text-green-700 font-medium">✅ Location captured successfully</p>
-              <p className="text-green-600 text-xs mt-0.5">
-                Latitude: {geo.lat.toFixed(6)} &nbsp; Longitude: {geo.lon.toFixed(6)}
-              </p>
+          {!location ? (
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={requestGeo}
+                disabled={geo.status === "loading"}
+                className="flex items-center justify-center gap-2 bg-[#d8f3dc] text-[#1a4731] rounded-xl px-4 py-3.5 text-base font-medium w-full hover:bg-[#95d5b2] transition-colors disabled:opacity-70"
+              >
+                {geo.status === "loading" ? <span>⏳ Detecting…</span> : <span>📍 Use My Current Location</span>}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowMapPicker(true)}
+                className="flex items-center justify-center gap-2 bg-white border border-[#d8f3dc] text-[#2d6a4f] rounded-xl px-4 py-3.5 text-base font-medium w-full hover:bg-[#f0faf5] transition-colors"
+              >
+                🗺️ Select Location on Map
+              </button>
+
+              {geo.status === "denied" && (
+                <p className="text-xs text-red-500 mt-1 bg-red-50 border border-red-200 rounded-xl px-4 py-2.5">
+                  Location permission was denied. Please enable location access and try again, or select your
+                  location on the map instead.
+                </p>
+              )}
+              {geo.status === "timeout" && (
+                <p className="text-xs text-red-500 mt-1 bg-red-50 border border-red-200 rounded-xl px-4 py-2.5">
+                  Location request timed out. Please try again, or select your location on the map.
+                </p>
+              )}
+              {geo.status === "unavailable" && (
+                <p className="text-xs text-red-500 mt-1 bg-red-50 border border-red-200 rounded-xl px-4 py-2.5">
+                  Your device could not determine the current location. Please select it on the map instead.
+                </p>
+              )}
+              {geo.status === "unsupported" && (
+                <p className="text-xs text-red-500 mt-1 bg-red-50 border border-red-200 rounded-xl px-4 py-2.5">
+                  Your browser doesn't support location access. Please select your location on the map.
+                </p>
+              )}
             </div>
-          )}
-          {geo.status === "denied" && (
-            <p className="text-xs text-red-500 mt-2 bg-red-50 border border-red-200 rounded-xl px-4 py-2.5">
-              Location permission denied. Please enable location access to find nearby plants, then tap the
-              button again.
-            </p>
-          )}
-          {geo.status === "unsupported" && (
-            <p className="text-xs text-red-500 mt-2 bg-red-50 border border-red-200 rounded-xl px-4 py-2.5">
-              Your browser doesn't support location access.
-            </p>
-          )}
-          {geo.status === "unavailable" && (
-            <p className="text-xs text-red-500 mt-2 bg-red-50 border border-red-200 rounded-xl px-4 py-2.5">
-              Couldn't determine your location. Please check your device's GPS/location settings and try again.
-            </p>
+          ) : (
+            <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-green-700 font-medium text-sm">
+                    {location.source === "gps" ? "📍 GPS location" : "📌 Location selected manually on map"}
+                  </p>
+                  <p className="text-green-600 text-xs mt-1">
+                    {location.latitude.toFixed(6)}, {location.longitude.toFixed(6)}
+                  </p>
+                  {location.source === "gps" && location.accuracy !== null && quality && (
+                    <p className={`text-xs mt-1 font-medium ${quality.colorClass}`}>
+                      Accuracy: {Math.round(location.accuracy)} m ({quality.label})
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={changeLocation}
+                  className="text-xs bg-white border border-green-300 text-green-700 px-3 py-1.5 rounded-full font-medium hover:bg-green-100 transition-colors flex-shrink-0"
+                >
+                  Change
+                </button>
+              </div>
+
+              {location.source === "gps" && location.accuracy !== null && location.accuracy > 100 && (
+                <div className="mt-2 pt-2 border-t border-green-200">
+                  <p className="text-xs text-yellow-700">
+                    ⚠️ GPS accuracy is currently {Math.round(location.accuracy)} m. Please move to an open area
+                    and retry, or select the location manually on the map.
+                  </p>
+                  <div className="flex gap-2 mt-2">
+                    <button
+                      type="button"
+                      onClick={requestGeo}
+                      className="text-xs bg-white border border-yellow-300 text-yellow-800 px-3 py-1.5 rounded-full font-medium hover:bg-yellow-50"
+                    >
+                      Retry Location
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowMapPicker(true)}
+                      className="text-xs bg-white border border-yellow-300 text-yellow-800 px-3 py-1.5 rounded-full font-medium hover:bg-yellow-50"
+                    >
+                      Select on Map
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
         </div>
 
@@ -309,16 +397,21 @@ export default function AddPlant() {
 
         <button
           type="submit"
-          disabled={loading}
+          disabled={isSubmitting}
           className="w-full bg-[#2d6a4f] text-white rounded-2xl py-4 font-semibold text-lg hover:bg-[#1a4731] transition-colors disabled:opacity-60"
         >
-          {loading
-            ? uploadPct !== null && uploadPct < 100
-              ? "Uploading photo…"
-              : "Saving…"
-            : "🌿 Add Plant"}
+          {stage === "uploading" ? "Uploading photo…" : stage === "saving" ? "Submitting plant…" : "🌿 Add Plant"}
         </button>
       </form>
+
+      {showMapPicker && (
+        <LocationPicker
+          initialLat={location?.latitude}
+          initialLon={location?.longitude}
+          onConfirm={handleMapConfirm}
+          onCancel={() => setShowMapPicker(false)}
+        />
+      )}
     </div>
   );
 }

@@ -23,3 +23,17 @@ export function formatDistance(m: number): string {
 export function googleMapsNav(lat: number, lon: number): string {
   return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}`;
 }
+
+export interface GpsQuality {
+  label: "Excellent" | "Good" | "Fair" | "Poor";
+  colorClass: string;
+}
+
+/** Honest classification of GPS accuracy in metres — never fabricated,
+ * always derived from the real value the browser reported. */
+export function gpsQuality(accuracyMetres: number): GpsQuality {
+  if (accuracyMetres <= 20) return { label: "Excellent", colorClass: "text-green-600" };
+  if (accuracyMetres <= 50) return { label: "Good", colorClass: "text-green-500" };
+  if (accuracyMetres <= 100) return { label: "Fair", colorClass: "text-yellow-600" };
+  return { label: "Poor", colorClass: "text-red-500" };
+}

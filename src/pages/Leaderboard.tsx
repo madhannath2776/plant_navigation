@@ -23,7 +23,6 @@ export default function Leaderboard() {
               .from("plants")
               .select("id", { count: "exact" })
               .eq("submitted_by", p.id)
-              .eq("status", "approved")
               .then(({ count }) => ({
                 id: p.id,
                 name: p.name,

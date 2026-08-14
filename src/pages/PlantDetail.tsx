@@ -18,7 +18,7 @@ export default function PlantDetail() {
     if (!id) return;
     supabase
       .from("plants")
-      .select("*, profiles(name)")
+      .select("*, profiles!submitted_by(name)")
       .eq("id", id)
       .single()
       .then(({ data, error }) => {

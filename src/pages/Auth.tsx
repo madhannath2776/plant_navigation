@@ -36,9 +36,24 @@ export default function Auth() {
       }
       setDone(true);
     } else {
-      const { error: err } = await supabase.auth.signInWithPassword({ email, password });
+      const { data, error: err } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
       if (err) { setError(err.message); setLoading(false); return; }
-      navigate("/");
+      if (!data?.user) { setError("Login failed. Please try again."); setLoading(false); return; }
+
+      // Query the role directly rather than reading it from AuthContext —
+      // the context's profile fetch runs asynchronously off the
+      // onAuthStateChange listener and may not have resolved yet at this
+      // exact point, so this avoids a race condition on first login.
+      const { data: profileRow } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", data.user.id)
+        .single();
+
+      navigate(profileRow?.role === "admin" ? "/admin" : "/");
     }
     setLoading(false);
   }
